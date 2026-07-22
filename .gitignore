@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+drift_report*.json
+drift_report*.md
+_inputs*/

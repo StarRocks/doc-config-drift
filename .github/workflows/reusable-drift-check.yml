@@ -1,0 +1,85 @@
+name: reusable-drift-check
+
+# Reusable workflow: audit config doc↔code drift for the CALLING repository.
+#
+# Same-repo case (code + docs together, e.g. StarRocks/starrocks):
+#   jobs:
+#     drift:
+#       uses: StarRocks/doc-config-drift/.github/workflows/reusable-drift-check.yml@main
+#       with:
+#         components: "fe be"
+#         changed-since: ${{ github.event.pull_request.base.sha }}   # optional, PR-only findings
+#
+# Split-repo case (docs here, code in StarRocks/starrocks — e.g. commercial docs):
+#   pass code-repo/code-ref and the docs-dir/code-file inputs; see README.
+
+on:
+  workflow_call:
+    inputs:
+      components:
+        description: 'Space-separated components to check (fe, be).'
+        type: string
+        default: 'fe be'
+      changed-since:
+        description: 'Git ref; when set, only params changed vs this ref are reported.'
+        type: string
+        default: ''
+      fail-on-drift:
+        description: 'Fail the job when authoritative drift is found.'
+        type: boolean
+        default: false
+      code-repo:
+        description: 'Repo holding the code source-of-truth (default: the caller).'
+        type: string
+        default: ''
+      code-ref:
+        description: 'Ref of code-repo to check out (branch/tag/sha).'
+        type: string
+        default: 'main'
+
+jobs:
+  drift:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out caller (docs)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          path: caller
+
+      - name: Check out the drift engine
+        uses: actions/checkout@v4
+        with:
+          repository: StarRocks/doc-config-drift
+          ref: main
+          path: engine
+
+      - name: Check out code source-of-truth (split-repo only)
+        if: inputs.code-repo != ''
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.code-repo }}
+          ref: ${{ inputs.code-ref }}
+          path: code
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Run drift audit
+        run: |
+          set +e
+          rc=0
+          : > "$GITHUB_STEP_SUMMARY"
+          for comp in ${{ inputs.components }}; do
+            echo "## ${comp^^} configuration drift" >> "$GITHUB_STEP_SUMMARY"
+            args="--component $comp --repo caller --format markdown"
+            if [ -n "${{ inputs.changed-since }}" ]; then
+              args="$args --changed-since ${{ inputs.changed-since }}"
+            fi
+            python3 engine/drift_audit.py $args >> "$GITHUB_STEP_SUMMARY"
+            [ $? -ne 0 ] && rc=1
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+          done
+          if [ "${{ inputs.fail-on-drift }}" = "true" ]; then exit $rc; fi
+          exit 0
