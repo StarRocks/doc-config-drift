@@ -29,13 +29,29 @@ on:
         type: boolean
         default: false
       code-repo:
-        description: 'Repo holding the code source-of-truth (default: the caller).'
+        description: >
+          Repo holding the code source-of-truth (default: the caller). Set this
+          for the split-repo case (docs here, code elsewhere). This is the single
+          swap point when the source of truth later moves to a commercial repo.
         type: string
         default: ''
       code-ref:
         description: 'Ref of code-repo to check out (branch/tag/sha).'
         type: string
         default: 'main'
+      docs-dir:
+        description: >
+          Path (relative to the caller repo) to the docs root to scan. Defaults
+          to the StarRocks *_parameters dir per component; cloud docs pass e.g.
+          "docs/en" and combine with subset=true.
+        type: string
+        default: ''
+      subset:
+        description: >
+          Docs are a curated subset (e.g. a cloud product): report only value
+          drift, skip undocumented/stale.
+        type: boolean
+        default: false
 
 jobs:
   drift:
@@ -67,16 +83,34 @@ jobs:
           python-version: '3.11'
 
       - name: Run drift audit
+        env:
+          CODE_REPO: ${{ inputs.code-repo }}
+          DOCS_DIR: ${{ inputs.docs-dir }}
+          SUBSET: ${{ inputs.subset }}
+          CHANGED_SINCE: ${{ inputs.changed-since }}
         run: |
           set +e
           rc=0
           : > "$GITHUB_STEP_SUMMARY"
           for comp in ${{ inputs.components }}; do
             echo "## ${comp^^} configuration drift" >> "$GITHUB_STEP_SUMMARY"
-            args="--component $comp --repo caller --format markdown"
-            if [ -n "${{ inputs.changed-since }}" ]; then
-              args="$args --changed-since ${{ inputs.changed-since }}"
+            # StarRocks-layout code path + default docs dir per component.
+            case "$comp" in
+              fe) codepath="fe/fe-core/src/main/java/com/starrocks/common/Config.java"
+                  docdefault="docs/en/administration/management/FE_parameters" ;;
+              be) codepath="be/src/common/config.h"
+                  docdefault="docs/en/administration/management/BE_parameters" ;;
+            esac
+            docsdir="${DOCS_DIR:-$docdefault}"
+            if [ -n "$CODE_REPO" ]; then
+              # split-repo: code from another checkout, docs from the caller
+              args="--component $comp --code-file code/$codepath --docs-dir caller/$docsdir --format markdown"
+            else
+              # same-repo: code and docs together in the caller
+              args="--component $comp --repo caller --format markdown"
+              [ -n "$CHANGED_SINCE" ] && args="$args --changed-since $CHANGED_SINCE"
             fi
+            [ "$SUBSET" = "true" ] && args="$args --subset"
             python3 engine/drift_audit.py $args >> "$GITHUB_STEP_SUMMARY"
             [ $? -ne 0 ] && rc=1
             echo "" >> "$GITHUB_STEP_SUMMARY"

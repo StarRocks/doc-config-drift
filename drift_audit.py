@@ -125,7 +125,8 @@ CODE_PARSERS = {"java-conffield": parse_code_java, "cpp-conf": parse_code_cpp}
 # Param heading is a single lowercase-first token, with (FE) or without (BE)
 # backticks. Lowercase-first is what distinguishes a config param name from a
 # section header ("## Logging", "## Query") — config names are always lowercase.
-_DOC_HEADING_RE = re.compile(r"^#{2,4}\s+[`']?([a-z_][a-z0-9_.]*)[`']?\s*(?:\[.*)?$")
+# h2–h6: StarRocks uses ### ; PhoenixData / cloud MDX partials use #####.
+_DOC_HEADING_RE = re.compile(r"^#{2,6}\s+[`']?([a-z_][a-z0-9_.]*)[`']?\s*(?:\[.*)?$")
 _FIELD_RE = {
     "default": re.compile(r"^[*-][ \t]*Default[:：][ \t]*(.*)$"),   # tolerate '*'/'-' and ：
     "mutable": re.compile(r"^[*-][ \t]*Is mutable[:：][ \t]*(.*)$"),
@@ -196,7 +197,10 @@ def _tokens(v):
 
 
 # ── Diff ─────────────────────────────────────────────────────────────────────
-def audit(code, docs, restrict=None):
+def audit(code, docs, restrict=None, subset=False):
+    # subset=True: the docs are a curated subset (e.g. a cloud product) — code
+    # params they don't mention are intentional, so skip undocumented/stale and
+    # report only value drift for the params they DO document.
     code_names = set(code)
     out = {k: [] for k in ("default_mismatch", "mutable_mismatch", "stale_in_docs",
                            "undocumented", "doc_missing_default")}
@@ -205,7 +209,8 @@ def audit(code, docs, restrict=None):
             continue
         d = docs.get(name) or next((docs[a] for a in c["aliases"] if a in docs), None)
         if d is None:
-            out["undocumented"].append(name)
+            if not subset:
+                out["undocumented"].append(name)
             continue
         if not (d["default"] or "").strip():
             out["doc_missing_default"].append({"name": name, "file": d["source_file"]})
@@ -222,7 +227,7 @@ def audit(code, docs, restrict=None):
             out["mutable_mismatch"].append(
                 {"name": name, "doc": d["mutable"],
                  "code": "Yes" if c["mutable"] else "No", "file": d["source_file"]})
-    if restrict is None:
+    if restrict is None and not subset:
         for name, d in docs.items():
             if name not in code_names and not any(name in c["aliases"] for c in code.values()):
                 out["stale_in_docs"].append({"name": name, "file": d["source_file"]})
@@ -294,19 +299,28 @@ def main():
     ap.add_argument("--format", choices=["json", "markdown", "text"], default="text")
     ap.add_argument("--fail-on", default=",".join(HARD_CATEGORIES),
                     help="comma-separated categories that cause non-zero exit")
+    ap.add_argument("--subset", action="store_true",
+                    help="docs are a curated subset (e.g. a cloud product): report "
+                         "only value drift, skip undocumented/stale")
     args = ap.parse_args()
     cfg = COMPONENTS[args.component]
+
+    # Recursively collect .md and .mdx (cloud docs keep params in .mdx partials,
+    # possibly nested under _assets/, cluster_management/, etc.).
+    def doc_files(d):
+        d = Path(d)
+        return sorted(set(d.rglob("*.md")) | set(d.rglob("*.mdx")))
 
     # Resolve inputs
     if args.code_file and args.docs_dir:
         code_text = Path(args.code_file).read_text()
-        doc_paths = sorted(Path(args.docs_dir).glob("*.md"))
+        doc_paths = doc_files(args.docs_dir)
         label = f"{args.code_file} vs {args.docs_dir}"
     elif args.repo:
         repo = Path(args.repo)
         code_text = (Path(args.code_file) if args.code_file else repo / cfg["code"]).read_text()
         docs_dir = Path(args.docs_dir) if args.docs_dir else repo / cfg["docs"]
-        doc_paths = sorted(docs_dir.glob("*.md"))
+        doc_paths = doc_files(docs_dir)
         label = f"{args.repo} @ {args.branch}"
     else:
         import urllib.request
@@ -323,7 +337,7 @@ def main():
 
     code = CODE_PARSERS[cfg["kind"]](code_text)
     docs = parse_docs(doc_paths)
-    out = audit(code, docs, restrict)
+    out = audit(code, docs, restrict, subset=args.subset)
 
     if args.format == "json":
         print(json.dumps({"component": args.component, "source": label,
