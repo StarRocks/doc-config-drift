@@ -45,7 +45,7 @@ python3 drift_audit.py --component be --repo . --changed-since origin/main
 # Split-repo: code from StarRocks, docs from another repo (e.g. commercial docs)
 python3 drift_audit.py --component fe \
     --code-file /path/to/starrocks/fe/.../Config.java \
-    --docs-dir  /path/to/celerdata-docs/.../FE_parameters
+    --docs-dir  /path/to/phoenixai-docs/.../FE_parameters
 ```
 
 `--format` is `text` (default), `json`, or `markdown`. Exit code is non-zero when
@@ -73,7 +73,7 @@ to the job's Step Summary.
 ## Consumers
 
 - **StarRocks/starrocks** — see note below.
-- **CelerData commercial docs** (`celerdata-cloud-docs`, `phoenixdata-docs`, …) —
+- **PhoenixAI commercial docs** (`phoenixdata-docs`, …) —
   run against the StarRocks codebase (which they build on) with their own
   `--docs-dir`.
 

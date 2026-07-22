@@ -30,7 +30,7 @@ Usage:
   # Audit code from GitHub against docs in another repo (e.g. commercial docs):
   python3 drift_audit.py --component fe \\
       --code-file /path/to/Config.java \\
-      --docs-dir  /path/to/celerdata-docs/en/.../FE_parameters
+      --docs-dir  /path/to/phoenixai-docs/en/.../FE_parameters
 
   # In CI, restrict findings to params touched by this PR:
   python3 drift_audit.py --component be --repo . --changed-since origin/main
